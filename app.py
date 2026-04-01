@@ -72,7 +72,7 @@ the Data Optimization team.
 def get_model(api_key):
     genai.configure(api_key=api_key)
     return genai.GenerativeModel(
-                model_name="gemini-2.0-flash-lite",
+                        model_name="gemini-2.5-flash-preview-04-17",
         system_instruction=SYSTEM_PROMPT,
         generation_config=genai.types.GenerationConfig(
             temperature=0.2,
