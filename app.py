@@ -169,39 +169,25 @@ def send_message(prompt):
                 )
             )
 
-            # Stream the response - try multiple models in order
-            models_to_try = [
-                "gemini-2.0-flash",
-                "gemini-2.0-flash-exp",
-                "gemini-1.5-flash",
-                "gemini-1.5-flash-latest",
-            ]
+            # List available models and use the first working one
+            available_models = [m.name for m in client.models.list()]
+            flash_models = [m for m in available_models if "flash" in m and "gemini" in m]
+            model_name = flash_models[0] if flash_models else "gemini-2.0-flash-exp"
 
-            response = None
-            last_error = None
-            for model_name in models_to_try:
-                try:
-                    response = client.models.generate_content_stream(
-                        model=model_name,
-                        contents=contents,
-                        config=types.GenerateContentConfig(
-                            system_instruction=SYSTEM_PROMPT,
-                            temperature=0.2,
-                            max_output_tokens=2048,
-                        )
-                    )
-                    # Test if it works by consuming first chunk
-                    for chunk in response:
-                        if chunk.text:
-                            full_response += chunk.text
-                            placeholder.markdown(full_response + "▌")
-                    break  # Success - exit loop
-                except Exception as model_err:
-                    last_error = model_err
-                    continue  # Try next model
+            response = client.models.generate_content_stream(
+                model=model_name,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    temperature=0.2,
+                    max_output_tokens=2048,
+                )
+            )
 
-            if not full_response and last_error:
-                raise last_error
+            for chunk in response:
+                if chunk.text:
+                    full_response += chunk.text
+                    placeholder.markdown(full_response + "▌")
 
             elapsed = time.time() - start_time
             placeholder.markdown(full_response)
