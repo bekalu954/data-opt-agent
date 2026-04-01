@@ -1,10 +1,11 @@
 """
 Data Optimization Assistant - Team Web App
-Built with Streamlit + Google Gemini 1.5 Flash
+Built with Streamlit + Google Gemini
 Share the URL with your team - no installation required.
 """
 import streamlit as st
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import time
 
 # ── Page Configuration ──────────────────────────────────────────────
@@ -67,18 +68,10 @@ the Data Optimization team.
 - For Bentley version questions: Always reference the live Bentley documentation URLs above.
 """
 
-# ── Initialize Gemini Model ─────────────────────────────────────────
+# ── Initialize Gemini Client ─────────────────────────────────────────
 @st.cache_resource
-def get_model(api_key):
-    genai.configure(api_key=api_key)
-    return genai.GenerativeModel(
-                        model_name="gemini-2.5-flash-preview-04-17",
-        system_instruction=SYSTEM_PROMPT,
-        generation_config=genai.types.GenerationConfig(
-            temperature=0.2,
-            max_output_tokens=2048,
-        )
-    )
+def get_client(api_key):
+    return genai.Client(api_key=api_key)
 
 # ── Sidebar ──────────────────────────────────────────────────────────
 with st.sidebar:
@@ -104,7 +97,7 @@ with st.sidebar:
     st.markdown("---")
     if st.button("🗑️ Clear Conversation"):
         st.session_state["messages"] = []
-        st.session_state["chat"] = None
+        st.session_state["history"] = []
         st.rerun()
     st.markdown("---")
     st.markdown("**Bentley Documentation:**")
@@ -113,7 +106,7 @@ with st.sidebar:
     st.markdown("[🔧 Administrator Help v2025](https://docs.bentley.com/LiveContent/web/ProjectWise%20Administrator-v2025/Help/en/topics/1688349/GUID-69C4F050-35CF-4663-9D34-C9B84BF5E065.html)")
     st.markdown("[📘 GreenBook Best Practices](https://bentleysystems.service-now.com/community?id=kb_article_view&sysparm_article=KB0020014)")
     st.markdown("---")
-    st.caption("Powered by Gemini 1.5 Flash")
+    st.caption("Powered by Gemini")
 
 # ── Main Interface ───────────────────────────────────────────────────
 st.title("📊 Data Optimization Assistant")
@@ -122,8 +115,8 @@ st.caption("Your team's shared AI agent for ProjectWise, data pipelines, and doc
 # ── Session State ────────────────────────────────────────────────────
 if "messages" not in st.session_state:
     st.session_state["messages"] = []
-if "chat" not in st.session_state:
-    st.session_state["chat"] = None
+if "history" not in st.session_state:
+    st.session_state["history"] = []
 if "quick_question" not in st.session_state:
     st.session_state["quick_question"] = None
 
@@ -148,10 +141,7 @@ for message in st.session_state["messages"]:
 
 # ── Send Message Function ────────────────────────────────────────────
 def send_message(prompt):
-    model = get_model(GEMINI_API_KEY)
-    if st.session_state["chat"] is None:
-        st.session_state["chat"] = model.start_chat(history=[])
-    chat = st.session_state["chat"]
+    client = get_client(GEMINI_API_KEY)
 
     st.session_state["messages"].append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -161,20 +151,71 @@ def send_message(prompt):
         start_time = time.time()
         placeholder = st.empty()
         full_response = ""
+
         try:
-            response = chat.send_message(prompt, stream=True)
-            for chunk in response:
-                if chunk.text:
-                    full_response += chunk.text
-                    placeholder.markdown(full_response + "▌")
+            # Build conversation history
+            contents = []
+            for msg in st.session_state["history"]:
+                contents.append(
+                    types.Content(
+                        role=msg["role"],
+                        parts=[types.Part(text=msg["content"])]
+                    )
+                )
+            contents.append(
+                types.Content(
+                    role="user",
+                    parts=[types.Part(text=prompt)]
+                )
+            )
+
+            # Stream the response - try multiple models in order
+            models_to_try = [
+                "gemini-2.0-flash",
+                "gemini-2.0-flash-exp",
+                "gemini-1.5-flash",
+                "gemini-1.5-flash-latest",
+            ]
+
+            response = None
+            last_error = None
+            for model_name in models_to_try:
+                try:
+                    response = client.models.generate_content_stream(
+                        model=model_name,
+                        contents=contents,
+                        config=types.GenerateContentConfig(
+                            system_instruction=SYSTEM_PROMPT,
+                            temperature=0.2,
+                            max_output_tokens=2048,
+                        )
+                    )
+                    # Test if it works by consuming first chunk
+                    for chunk in response:
+                        if chunk.text:
+                            full_response += chunk.text
+                            placeholder.markdown(full_response + "▌")
+                    break  # Success - exit loop
+                except Exception as model_err:
+                    last_error = model_err
+                    continue  # Try next model
+
+            if not full_response and last_error:
+                raise last_error
+
             elapsed = time.time() - start_time
             placeholder.markdown(full_response)
             st.caption(f"Response time: {elapsed:.1f}s")
+
         except Exception as e:
             full_response = f"Error: {str(e)}\n\nPlease check your API key and try again."
             placeholder.markdown(full_response)
 
-    st.session_state["messages"].append({"role": "assistant", "content": full_response})
+    st.session_state["messages"].append(
+        {"role": "assistant", "content": full_response}
+    )
+    st.session_state["history"].append({"role": "user", "content": prompt})
+    st.session_state["history"].append({"role": "model", "content": full_response})
 
 # ── Handle Quick Question Buttons ────────────────────────────────────
 if st.session_state["quick_question"]:
